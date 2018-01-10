@@ -77,7 +77,22 @@ class SelectorBIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on BIC scores
-        raise NotImplementedError
+        best_score = float("Inf")
+        best_model = None
+        for num_states in range(self.min_n_components, self.max_n_components + 1):
+            try:
+                # This is in a try/except block because sometimes the score function
+                # fails with an error.
+                the_model = self.base_model(num_states)
+                logL = the_model.score(self.X, self.lengths)
+                bic_score = -2. * logL + float(num_states) * np.log(len(self.X))
+                if bic_score < best_score:
+                    best_score = bic_score
+                    best_model = the_model
+            except:
+                pass
+
+        return best_model
 
 
 class SelectorDIC(ModelSelector):
@@ -94,7 +109,48 @@ class SelectorDIC(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection based on DIC scores
-        raise NotImplementedError
+        best_score = float("-Inf")
+        best_model = None
+        #total_num_words = len(self.words)
+        for num_states in range(self.min_n_components, self.max_n_components + 1):
+
+            # Compute the score for the model with the current word.
+            the_model = self.base_model(num_states)
+            try:
+                this_word_logL = the_model.score(self.X, self.lengths)
+            except Exception as e:
+                #print('failed training for {}, num_states={}'.format(self.this_word, num_states))
+                #print(e)
+                continue
+
+            #print('this_word_logL: {}'.format(this_word_logL))
+
+            # Loop through all the words and compute the term SUM(log(P(X(all but i)).
+            sum_vals = 0.0
+            total_num_words = 0
+            #print(self.words)
+            for word in self.words.keys():
+                if word != self.this_word:
+                    X, lengths = self.hwords[word]
+                    try:
+                        word_score = the_model.score(X, lengths)
+                        sum_vals += word_score
+                        total_num_words += 1
+                    except:
+                        pass
+                    #print('word_score: {} word:{}'.format(word_score, word))
+            sum_vals /= float(total_num_words - 1.)
+
+            #print('sum_vals: {}'.format(sum_vals))
+
+            dic_score = this_word_logL - sum_vals
+            #print('this_word: {}, num_states:{} sum_vals:{} this_word_logL:{} dic_score:{}'
+            #      .format(self.this_word, num_states, sum_vals, this_word_logL, dic_score))
+            if dic_score > best_score:
+                best_score = dic_score
+                best_model = the_model
+
+        return best_model
 
 
 class SelectorCV(ModelSelector):
@@ -106,4 +162,34 @@ class SelectorCV(ModelSelector):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
         # TODO implement model selection using CV
-        raise NotImplementedError
+        best_score = float("-Inf")
+        best_num_states = None
+        for num_states in range(self.min_n_components, self.max_n_components + 1):
+            min_num_splits = 3
+            split_method = KFold(n_splits=min_num_splits)
+            sum_logL = 0.0
+
+            try:
+                for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
+                    train_X, train_X_lengths = combine_sequences(cv_train_idx, self.sequences)
+                    test_X, test_X_lengths = combine_sequences(cv_test_idx, self.sequences)
+
+                    # Fit a model to the training fold.
+                    hmm_model = \
+                        GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000,
+                            random_state=self.random_state, verbose=False).fit(train_X, train_X_lengths)
+
+                    # Score the model on the test fold.
+                    sum_logL += hmm_model.score(test_X, test_X_lengths)
+
+            except Exception as e:
+                pass
+                #print(
+                #'training failed for {} with num_states:{}'.format(self.this_word, num_states))
+
+            avg_logL = sum_logL / float(min_num_splits)
+            if avg_logL > best_score:
+                best_score = avg_logL
+                best_num_states = num_states
+
+        return self.base_model(best_num_states)
