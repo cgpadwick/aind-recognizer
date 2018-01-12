@@ -111,7 +111,6 @@ class SelectorDIC(ModelSelector):
         # TODO implement model selection based on DIC scores
         best_score = float("-Inf")
         best_model = None
-        #total_num_words = len(self.words)
         for num_states in range(self.min_n_components, self.max_n_components + 1):
 
             # Compute the score for the model with the current word.
@@ -123,12 +122,9 @@ class SelectorDIC(ModelSelector):
                 #print(e)
                 continue
 
-            #print('this_word_logL: {}'.format(this_word_logL))
-
             # Loop through all the words and compute the term SUM(log(P(X(all but i)).
             sum_vals = 0.0
             total_num_words = 0
-            #print(self.words)
             for word in self.words.keys():
                 if word != self.this_word:
                     X, lengths = self.hwords[word]
@@ -138,14 +134,8 @@ class SelectorDIC(ModelSelector):
                         total_num_words += 1
                     except:
                         pass
-                    #print('word_score: {} word:{}'.format(word_score, word))
             sum_vals /= float(total_num_words - 1.)
-
-            #print('sum_vals: {}'.format(sum_vals))
-
             dic_score = this_word_logL - sum_vals
-            #print('this_word: {}, num_states:{} sum_vals:{} this_word_logL:{} dic_score:{}'
-            #      .format(self.this_word, num_states, sum_vals, this_word_logL, dic_score))
             if dic_score > best_score:
                 best_score = dic_score
                 best_model = the_model
