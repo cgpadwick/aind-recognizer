@@ -20,7 +20,7 @@ def recognize(models: dict, test_set: SinglesData):
     warnings.filterwarnings("ignore", category=DeprecationWarning)
     probabilities = []
     guesses = []
-    # TODO implement the recognizer
+    # My implementation starts here.
     # For each row in the test set, score each model on the test set and store the result
     # in the probabilities list.
     num_rows = test_set.num_items

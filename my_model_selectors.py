@@ -76,20 +76,30 @@ class SelectorBIC(ModelSelector):
         """
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on BIC scores
+        # My implementation starts here.
         best_score = float("Inf")
         best_model = None
+
         for num_states in range(self.min_n_components, self.max_n_components + 1):
             try:
                 # This is in a try/except block because sometimes the score function
                 # fails with an error.
                 the_model = self.base_model(num_states)
-                logL = the_model.score(self.X, self.lengths)
-                bic_score = -2. * logL + float(num_states) * np.log(len(self.X))
-                if bic_score < best_score:
-                    best_score = bic_score
-                    best_model = the_model
-            except:
+                if the_model:
+                    logL = the_model.score(self.X, self.lengths)
+
+                    # We have to calculate p, the number of parameters in the model.
+                    # The following equation is valid since we are using the "diag" covariance type
+                    # for the model.
+                    num_features = len(self.X[0])  # number of columns in feature set
+                    p = num_states**2 + 2 * num_features * num_states - 1
+
+                    bic_score = -2. * logL + float(p) * np.log(len(self.X))
+                    if bic_score < best_score:
+                        best_score = bic_score
+                        best_model = the_model
+
+            except ValueError as e:
                 pass
 
         return best_model
@@ -108,37 +118,27 @@ class SelectorDIC(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection based on DIC scores
+        # My implementation starts here.
         best_score = float("-Inf")
         best_model = None
         for num_states in range(self.min_n_components, self.max_n_components + 1):
 
-            # Compute the score for the model with the current word.
-            the_model = self.base_model(num_states)
             try:
-                this_word_logL = the_model.score(self.X, self.lengths)
-            except Exception as e:
+                # Compute the score for the model with the current word.
+                the_model = self.base_model(num_states)
+                if the_model:
+                    this_word_logL = the_model.score(self.X, self.lengths)
+                    other_word_penalty = np.mean(
+                        [the_model.score(*self.hwords[word]) for word in self.words
+                         if word != self.this_word])
+                    dic_score = this_word_logL - other_word_penalty
+                    if dic_score > best_score:
+                        best_score = dic_score
+                        best_model = the_model
+            except ValueError as e:
                 #print('failed training for {}, num_states={}'.format(self.this_word, num_states))
                 #print(e)
                 continue
-
-            # Loop through all the words and compute the term SUM(log(P(X(all but i)).
-            sum_vals = 0.0
-            total_num_words = 0
-            for word in self.words.keys():
-                if word != self.this_word:
-                    X, lengths = self.hwords[word]
-                    try:
-                        word_score = the_model.score(X, lengths)
-                        sum_vals += word_score
-                        total_num_words += 1
-                    except:
-                        pass
-            sum_vals /= float(total_num_words - 1.)
-            dic_score = this_word_logL - sum_vals
-            if dic_score > best_score:
-                best_score = dic_score
-                best_model = the_model
 
         return best_model
 
@@ -151,35 +151,59 @@ class SelectorCV(ModelSelector):
     def select(self):
         warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-        # TODO implement model selection using CV
+        # My implementation starts here.
         best_score = float("-Inf")
         best_num_states = None
         for num_states in range(self.min_n_components, self.max_n_components + 1):
-            min_num_splits = 3
-            split_method = KFold(n_splits=min_num_splits)
-            sum_logL = 0.0
 
-            try:
+            # Handle case when we have enough data to support at least a split of 2.
+            if len(self.sequences) > 2:
+                min_num_splits = min(3, len(self.sequences))
+                split_method = KFold(n_splits=min_num_splits)
+                sum_logL = 0.0
+
                 for cv_train_idx, cv_test_idx in split_method.split(self.sequences):
                     train_X, train_X_lengths = combine_sequences(cv_train_idx, self.sequences)
                     test_X, test_X_lengths = combine_sequences(cv_test_idx, self.sequences)
 
-                    # Fit a model to the training fold.
+                    try:
+                        # Fit a model to the training fold.
+                        hmm_model = \
+                            GaussianHMM(n_components=num_states, covariance_type="diag",
+                                        n_iter=1000, random_state=self.random_state,
+                                        verbose=False).fit(train_X, train_X_lengths)
+
+                        # Score the model on the test fold.
+                        sum_logL += hmm_model.score(test_X, test_X_lengths)
+
+                    except ValueError as e:
+                        pass
+
+                    avg_logL = sum_logL / float(min_num_splits)
+                    if avg_logL > best_score:
+                        best_score = avg_logL
+                        best_num_states = num_states
+
+            # There is not enough data to use k-fold validation so we use the entire training
+            # set.
+            else:
+                sum_logL = 0.0
+                try:
+                    # Fit a model to the training data.
                     hmm_model = \
-                        GaussianHMM(n_components=num_states, covariance_type="diag", n_iter=1000,
-                            random_state=self.random_state, verbose=False).fit(train_X, train_X_lengths)
+                        GaussianHMM(n_components=num_states, covariance_type="diag",
+                                    n_iter=1000, random_state=self.random_state,
+                                    verbose=False).fit(self.X, self.lengths)
 
-                    # Score the model on the test fold.
-                    sum_logL += hmm_model.score(test_X, test_X_lengths)
+                    # Score the model.
+                    sum_logL += hmm_model.score(self.X, self.lengths)
 
-            except Exception as e:
-                pass
-                #print(
-                #'training failed for {} with num_states:{}'.format(self.this_word, num_states))
+                except ValueError as e:
+                    pass
 
-            avg_logL = sum_logL / float(min_num_splits)
-            if avg_logL > best_score:
-                best_score = avg_logL
-                best_num_states = num_states
+                avg_logL = sum_logL / 1.0
+                if avg_logL > best_score:
+                    best_score = avg_logL
+                    best_num_states = num_states
 
         return self.base_model(best_num_states)
